@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: band-of-agents
+    runtime: python
+    plan: free
+    buildCommand: python -m pip install .
+    startCommand: uvicorn band_of_agents.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
