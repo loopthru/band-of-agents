@@ -217,6 +217,77 @@ def test_run_band_review_agents_poll_messages_then_summarizer_polls_gathered_out
     ]
 
 
+def test_run_band_review_updates_database_review_and_agent_statuses():
+    room = FakeBandRoom()
+    coordinator = room.client("coordinator-id")
+    security_client = room.client("security-id")
+    summarizer_client = room.client("summarizer-id")
+    repository_calls = []
+
+    class FakeReviewRepository:
+        def mark_review_agents_running(self, review_id, band_chat_id):
+            repository_calls.append(("review_agents_running", review_id, band_chat_id))
+
+        def ensure_review_status_rows(self, review_id):
+            repository_calls.append(("ensure_status_rows", review_id))
+
+        def mark_agent_processing(self, review_id, agent_key):
+            repository_calls.append(("agent_processing", review_id, agent_key))
+
+        def mark_agent_completed(self, review_id, agent_key, analysis):
+            repository_calls.append(("agent_completed", review_id, agent_key, analysis))
+
+        def mark_agent_failed(self, review_id, agent_key, error_message):
+            repository_calls.append(("agent_failed", review_id, agent_key, error_message))
+
+        def save_review_summarizer_output(self, review_id, summarizer_output):
+            repository_calls.append(("save_summarizer", review_id, summarizer_output))
+
+        def mark_review_summarized(self, review_id):
+            repository_calls.append(("review_summarized", review_id))
+
+    result = asyncio.run(
+        run_band_review(
+            payload={"evidence": {"summary": {"resources_total": 1}, "resources": []}},
+            session_uid="7df7eaa4-9d30-47df-b5b8-7f9e96df6e0d",
+            review_id="review-123",
+            review_repository=FakeReviewRepository(),
+            coordinator_client=coordinator,
+            specialist_agents=[BandAgentSpec(id="security-id", name="security-agent")],
+            specialist_clients={"security-agent": security_client},
+            specialist_runners={"security-agent": fake_security},
+            summarizer_agent=BandAgentSpec(id="summarizer-id", name="summarizer-agent"),
+            summarizer_client=summarizer_client,
+            summarizer_runner=fake_summarizer,
+            timeout_seconds=1,
+            poll_interval_seconds=0,
+        )
+    )
+
+    assert result["session_uid"] == "7df7eaa4-9d30-47df-b5b8-7f9e96df6e0d"
+    assert result["review_id"] == "review-123"
+    assert repository_calls == [
+        ("review_agents_running", "review-123", "chat-123"),
+        ("ensure_status_rows", "review-123"),
+        ("agent_processing", "review-123", "security-agent"),
+        (
+            "agent_completed",
+            "review-123",
+            "security-agent",
+            result["agent_results"][0]["output"],
+        ),
+        ("agent_processing", "review-123", "summarizer-agent"),
+        (
+            "agent_completed",
+            "review-123",
+            "summarizer-agent",
+            result["summarizer_output"],
+        ),
+        ("save_summarizer", "review-123", result["summarizer_output"]),
+        ("review_summarized", "review-123"),
+    ]
+
+
 def test_run_band_review_marks_missing_required_agent_as_error():
     room = FakeBandRoom()
     coordinator = room.client("coordinator-id")

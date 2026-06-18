@@ -26,7 +26,7 @@ The editable development install keeps tests pointed at the current `src/` files
 Start the API with:
 
 ```bash
-uvicorn band_of_agents.main:app --host 0.0.0.0 --port 8000
+uvicorn band_of_agents.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 The app exposes:
