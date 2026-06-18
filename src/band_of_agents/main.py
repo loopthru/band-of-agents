@@ -1,6 +1,7 @@
 from typing import Any
 from uuid import UUID
 
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 
 from band_of_agents.band_orchestrator import (
@@ -15,6 +16,16 @@ from band_of_agents.band_orchestrator import (
 from band_of_agents.review_repository import ReviewRepository
 
 app = FastAPI(title="Band of Agents")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "https://loopthru-web.onrender.com",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
