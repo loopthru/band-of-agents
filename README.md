@@ -33,6 +33,15 @@ The app exposes:
 
 - `GET /` for basic service metadata.
 - `GET /health` for a simple health check.
+- `POST /review` to run placeholder review agents asynchronously and return a combined answer.
+
+Example review request:
+
+```bash
+curl -X POST http://localhost:8000/review ^
+  -H "Content-Type: application/json" ^
+  -d "{\"topic\":\"release readiness\"}"
+```
 
 ## Tests
 
