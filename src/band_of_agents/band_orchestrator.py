@@ -45,6 +45,9 @@ async def run_band_review(
     specialist_runners: dict[str, AgentRunner],
     summarizer_agent: BandAgentSpec,
     summarizer_client: Any,
+    session_uid: str | None = None,
+    review_id: str | None = None,
+    review_repository: Any | None = None,
     summarizer_runner: AgentRunner = run_summarizer_agent_llm,
     timeout_seconds: float = 180,
     poll_interval_seconds: float = 3,
@@ -58,6 +61,10 @@ async def run_band_review(
     ]
 
     await coordinator_client.add_participants(participants=participants, chat_id=chat_id)
+    if review_repository and review_id:
+        review_repository.mark_review_agents_running(review_id, chat_id)
+        review_repository.ensure_review_status_rows(review_id)
+
     await send_specialist_task(
         coordinator_client=coordinator_client,
         chat_id=chat_id,
@@ -71,6 +78,8 @@ async def run_band_review(
         specialist_clients=specialist_clients,
         specialist_runners=specialist_runners,
         coordinator_id=getattr(coordinator_client, "agent_id", None),
+        review_id=review_id,
+        review_repository=review_repository,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
     )
@@ -85,6 +94,10 @@ async def run_band_review(
         "agent_results": agent_results,
         "gathered": gathered,
     }
+    if session_uid:
+        review_output["session_uid"] = session_uid
+    if review_id:
+        review_output["review_id"] = review_id
 
     await send_summarizer_task(
         coordinator_client=coordinator_client,
@@ -99,12 +112,23 @@ async def run_band_review(
         runner=summarizer_runner,
         task_input_key="review_output",
         coordinator_id=getattr(coordinator_client, "agent_id", None),
+        review_id=review_id,
+        review_repository=review_repository,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
     )
     review_output["summarizer_output"] = (
         summarizer_result["output"] if summarizer_result["status"] == "ok" else summarizer_result
     )
+    if review_repository and review_id:
+        if summarizer_result["status"] == "ok":
+            review_repository.save_review_summarizer_output(
+                review_id,
+                review_output["summarizer_output"],
+            )
+            review_repository.mark_review_summarized(review_id)
+        else:
+            review_repository.mark_review_failed(review_id)
     return review_output
 
 
@@ -167,12 +191,20 @@ async def run_specialist_agents_from_band_messages(
     coordinator_id: str | None,
     timeout_seconds: float,
     poll_interval_seconds: float,
+    review_id: str | None = None,
+    review_repository: Any | None = None,
 ) -> list[dict[str, Any]]:
     tasks = []
     for agent in agents:
         client = specialist_clients.get(agent.name)
         runner = specialist_runners.get(agent.name)
         if client is None or runner is None:
+            if review_repository and review_id:
+                review_repository.mark_agent_failed(
+                    review_id,
+                    agent.name,
+                    "Timed out waiting for agent response",
+                )
             tasks.append(_completed_result(_missing_agent_result(agent)))
             continue
         tasks.append(
@@ -183,6 +215,8 @@ async def run_specialist_agents_from_band_messages(
                 runner=runner,
                 task_input_key="evidence",
                 coordinator_id=coordinator_id,
+                review_id=review_id,
+                review_repository=review_repository,
                 timeout_seconds=timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
             )
@@ -204,6 +238,8 @@ async def run_band_agent_once(
     coordinator_id: str | None,
     timeout_seconds: float,
     poll_interval_seconds: float,
+    review_id: str | None = None,
+    review_repository: Any | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() <= deadline:
@@ -215,6 +251,8 @@ async def run_band_agent_once(
         message = response.json()["data"]
         message_id = message["id"]
         await client.change_message_status(chat_id, message_id, "processing")
+        if review_repository and review_id:
+            review_repository.mark_agent_processing(review_id, agent.name)
 
         task = parse_json_message(message) or {}
         task_input = task.get(task_input_key)
@@ -223,9 +261,22 @@ async def run_band_agent_once(
         elif task_input is None:
             task_input = {}
 
-        output = runner(task_input)
-        if inspect.isawaitable(output):
-            output = await output
+        try:
+            output = runner(task_input)
+            if inspect.isawaitable(output):
+                output = await output
+        except Exception as exc:  # noqa: BLE001 - agent failures become review inputs.
+            error_message = str(exc)
+            if review_repository and review_id:
+                review_repository.mark_agent_failed(review_id, agent.name, error_message)
+            await client.change_message_status(chat_id, message_id, "processed")
+            return {
+                "agent": agent.name,
+                "status": "error",
+                "required": agent.required,
+                "error": error_message,
+                "output": None,
+            }
 
         await post_agent_reply(
             client=client,
@@ -235,6 +286,8 @@ async def run_band_agent_once(
             coordinator_id=coordinator_id,
         )
         await client.change_message_status(chat_id, message_id, "processed")
+        if review_repository and review_id:
+            review_repository.mark_agent_completed(review_id, agent.name, output)
         return {
             "agent": agent.name,
             "status": "ok",
@@ -242,7 +295,10 @@ async def run_band_agent_once(
             "output": output,
         }
 
-    return _missing_agent_result(agent)
+    result = _missing_agent_result(agent)
+    if review_repository and review_id:
+        review_repository.mark_agent_failed(review_id, agent.name, result["error"])
+    return result
 
 
 async def post_agent_reply(

@@ -25,12 +25,28 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
-def test_review_runs_band_orchestrator(monkeypatch):
+def test_review_runs_band_orchestrator_from_session_uid(monkeypatch):
     captured = {}
+    session_uid = "7df7eaa4-9d30-47df-b5b8-7f9e96df6e0d"
+    evidence = {
+        "summary": {"resources_total": 1},
+        "resources": [{"address": "aws_s3_bucket.customer_data"}],
+    }
+
+    class FakeReviewRepository:
+        def get_review_by_session_uid(self, value):
+            assert value == session_uid
+            return {
+                "id": "review-123",
+                "session_uid": session_uid,
+                "evidence": evidence,
+            }
 
     async def fake_run_band_review(**kwargs):
         captured.update(kwargs)
         return {
+            "session_uid": session_uid,
+            "review_id": "review-123",
             "chat_id": "chat-123",
             "decision": "approve",
             "summary": "ready",
@@ -47,6 +63,7 @@ def test_review_runs_band_orchestrator(monkeypatch):
     summarizer_agent = BandAgentSpec(id="summarizer-id", name="summarizer-agent")
 
     monkeypatch.setattr(main, "run_band_review", fake_run_band_review)
+    monkeypatch.setattr(main, "build_review_repository", lambda: FakeReviewRepository())
     monkeypatch.setattr(main, "build_default_coordinator_client", lambda: "coordinator")
     monkeypatch.setattr(main, "build_default_specialist_agents", lambda: specialist_agents)
     monkeypatch.setattr(
@@ -66,12 +83,7 @@ def test_review_runs_band_orchestrator(monkeypatch):
         lambda agent: "summarizer-client",
     )
 
-    payload = {
-        "evidence": {
-            "summary": {"resources_total": 1},
-            "resources": [{"address": "aws_s3_bucket.customer_data"}],
-        }
-    }
+    payload = {"session_uid": session_uid}
     response = client.post(
         "/review",
         json=payload,
@@ -80,7 +92,10 @@ def test_review_runs_band_orchestrator(monkeypatch):
     assert response.status_code == 200
     assert response.json()["summary"] == "ready"
     assert captured == {
-        "payload": payload,
+        "payload": {"evidence": evidence},
+        "session_uid": session_uid,
+        "review_id": "review-123",
+        "review_repository": captured["review_repository"],
         "coordinator_client": "coordinator",
         "specialist_agents": specialist_agents,
         "specialist_clients": {
@@ -94,3 +109,19 @@ def test_review_runs_band_orchestrator(monkeypatch):
         "summarizer_agent": summarizer_agent,
         "summarizer_client": "summarizer-client",
     }
+
+
+def test_review_returns_404_when_session_uid_is_unknown(monkeypatch):
+    class FakeReviewRepository:
+        def get_review_by_session_uid(self, value):
+            return None
+
+    monkeypatch.setattr(main, "build_review_repository", lambda: FakeReviewRepository())
+
+    response = client.post(
+        "/review",
+        json={"session_uid": "7df7eaa4-9d30-47df-b5b8-7f9e96df6e0d"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Review session not found"
