@@ -25,6 +25,19 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_cors_allows_local_vite_frontend_preflight():
+    response = client.options(
+        "/review",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
 def test_review_runs_band_orchestrator_from_session_uid(monkeypatch):
     captured = {}
     session_uid = "7df7eaa4-9d30-47df-b5b8-7f9e96df6e0d"
