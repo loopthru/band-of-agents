@@ -11,12 +11,16 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    "uuid",
+    "openai"
 ]
 
 [project.optional-dependencies]
 dev = [
     "httpx",
     "pytest",
+    "uuid",
+    "openai"
 ]
 
 [tool.setuptools.packages.find]
