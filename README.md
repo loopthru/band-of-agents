@@ -1,6 +1,13 @@
 # band-of-agents
 
-A small FastAPI scaffold for the Band of Agents Hackathon.
+This is the repository for the band orchestrator that integrates with the Band.ai platform. It was built for the Band of Agents Hackathon.
+
+Application URL: https://loopthru-web.onrender.com/
+
+Related repositories:
+
+- [loopthru/loopthru-web](https://github.com/loopthru/loopthru-web)
+- [loopthru/evidence-engine](https://github.com/loopthru/evidence-engine)
 
 ## Local Setup
 
